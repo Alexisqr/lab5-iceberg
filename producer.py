@@ -5,7 +5,7 @@ import time
 
 # Підключення до Kafka
 producer = KafkaProducer(
-    bootstrap_servers=['broker1:29092','broker2:29093'],
+    bootstrap_servers=['localhost:9092', 'localhost:9093'],
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
 

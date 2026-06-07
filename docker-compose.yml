@@ -1,17 +1,25 @@
 version: '3.8'
-
+ 
+networks:
+  local-iceberg-lakehouse:
+    name: local-iceberg-lakehouse
+ 
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.4.0
+    networks:
+      - local-iceberg-lakehouse
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     ports:
       - "2181:2181"
-
+ 
   broker1:
     image: confluentinc/cp-kafka:7.4.0
     depends_on:
       - zookeeper
+    networks:
+      - local-iceberg-lakehouse
     ports:
       - "9092:9092"
     environment:
@@ -21,11 +29,19 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+ 
   broker2:
     image: confluentinc/cp-kafka:7.4.0
     depends_on:
       - zookeeper
+    networks:
+      - local-iceberg-lakehouse
     ports:
       - "9093:9093"
     environment:
@@ -35,20 +51,101 @@ services:
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:9093
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: 1
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+ 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     depends_on:
       - broker1
       - broker2
+    networks:
+      - local-iceberg-lakehouse
     ports:
-      - "8080:8080"
+      - "8090:8080"   # змінено з 8080 бо Trino займає 8080
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAP_SERVERS: broker1:29092,broker2:29093
-
+ 
   producer:
     build: .
+    networks:
+      - local-iceberg-lakehouse
     depends_on:
       - broker1
       - broker2
+ 
+  minio:
+    image: minio/minio:latest
+    networks:
+      local-iceberg-lakehouse:
+        aliases:
+          - warehouse.minio
+    volumes:
+      - ./minio_data:/data
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password
+      MINIO_DOMAIN: minio
+    ports:
+      - "9001:9001"
+      - "9000:9000"
+    command: ["server", "/data", "--console-address", ":9001"]
+ 
+  minio-client:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    networks:
+      - local-iceberg-lakehouse
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: dummy-region
+    entrypoint: >
+      /bin/sh -c "
+      until (mc alias set minio http://minio:9000 admin password) do echo '...waiting...' && sleep 1; done;
+      mc rm -r --force minio/warehouse;
+      mc mb minio/warehouse;
+      mc anonymous set public minio/warehouse;
+      tail -f /dev/null
+      "
+ 
+  polaris:
+    image: apache/polaris:latest
+    platform: linux/amd64
+    networks:
+      - local-iceberg-lakehouse
+    ports:
+      - "8181:8181"
+      - "8182:8182"
+    environment:
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: dummy-region
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+      AWS_ENDPOINT_URL_STS: http://minio:9000
+      POLARIS_BOOTSTRAP_CREDENTIALS: default-realm,root,secret
+      polaris.features.DROP_WITH_PURGE_ENABLED: "true"
+      polaris.realm-context.realms: default-realm
+    healthcheck:
+      test: ["CMD", "curl", "http://localhost:8181/healthcheck"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+ 
+  trino:
+    image: trinodb/trino:latest
+    networks:
+      - local-iceberg-lakehouse
+    ports:
+      - "8080:8080"
+    environment:
+      - TRINO_JVM_OPTS=-Xmx2G
+    volumes:
+      - ./trino/catalog:/etc/trino/catalog
+ 

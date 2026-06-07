@@ -1,4 +1,7 @@
-id,name,value
-1,cat,10
-2,dog,20
-3,mouse,30
+tripId,date,startStation,endStation,duration
+1,2025-05-01,StationA,StationB,15
+2,2025-05-01,StationA,StationC,20
+3,2025-05-01,StationB,StationC,10
+4,2025-05-02,StationC,StationA,30
+5,2025-05-02,StationA,StationB,25
+6,2025-05-02,StationB,StationA,15
